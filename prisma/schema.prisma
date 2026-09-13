@@ -1,0 +1,106 @@
+// Prisma schema for the Study Library owner-only admin tool.
+// Uses the standard Prisma Client against a pooled Postgres connection
+// string (see lib/prisma.ts and .env.example) so it works well inside
+// Vercel's serverless functions without needing a long-lived DB connection.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+}
+
+model Seat {
+  id         String   @id @default(cuid())
+  seatNumber Int      @unique
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  // A seat has at most one *currently* seated student at a time. When a
+  // student leaves, seatId is nulled out on their record, freeing the seat.
+  // A unique constraint on Student.seatId (below) is what actually makes
+  // "a seat can never be double-booked" a DB-enforced guarantee rather than
+  // just an application-level check.
+  currentStudent Student?
+}
+
+enum StudentStatus {
+  ACTIVE
+  LEFT
+}
+
+model Student {
+  id         String        @id @default(cuid())
+  name       String
+  phone      String
+  seatId     String?       @unique
+  seat       Seat?         @relation(fields: [seatId], references: [id])
+  joinDate   DateTime      @default(now())
+  status     StudentStatus @default(ACTIVE)
+
+  // Standard monthly fee (usually derived from the seat's normal rate at
+  // time of joining). customFee overrides this when set.
+  monthlyFee Decimal       @db.Decimal(10, 2)
+  customFee  Decimal?      @db.Decimal(10, 2)
+
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  payments Payment[]
+
+  @@index([status])
+}
+
+enum PaymentMode {
+  CASH
+  UPI
+  CARD
+  OTHER
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  studentId      String
+  student        Student       @relation(fields: [studentId], references: [id])
+
+  amount         Decimal       @db.Decimal(10, 2)
+
+  // The month this payment is "for" - stored as the 1st of that month.
+  periodMonth    DateTime
+
+  paidOn         DateTime      @default(now())
+
+  // The new due date this payment pushes the student to.
+  dueDateAfter   DateTime
+
+  mode           PaymentMode
+  status         PaymentStatus @default(PAID)
+
+  // Sequential/human-readable receipt number, e.g. "RCPT-0001".
+  receiptNo      String        @unique
+
+  // Groups payments made together in one bulk "mark paid" action.
+  batchId        String?
+
+  // For advance payments that cover multiple months at once.
+  monthsCovered  Int           @default(1)
+
+  createdAt      DateTime      @default(now())
+
+  @@index([studentId])
+  @@index([batchId])
+}
