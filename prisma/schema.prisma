@@ -104,3 +104,38 @@ model Payment {
   @@index([studentId])
   @@index([batchId])
 }
+
+/// Revenue that has already been collected but whose Student row has since
+/// been permanently deleted.
+///
+/// Deleting a student removes them (and their Payment rows) from every
+/// *forward-looking* calculation - dues, occupancy, active counts. It must
+/// not rewrite history: money collected in a past month was really collected,
+/// so that month's total has to stay exactly what it was. Before the payments
+/// are deleted they are summed per calendar month (by paidOn, the month the
+/// cash actually came in) and stored here, and the Reports page adds these
+/// totals back on top of the live Payment totals.
+///
+/// This is an append-only ledger of deleted students' contributions. Nothing
+/// in the app links back to the student - the row is deliberately just a name
+/// snapshot, so deleting a student really does remove their record.
+model ArchivedRevenue {
+  id             String   @id @default(cuid())
+
+  /// Name the student had at the moment they were deleted, for reports/CSV.
+  studentName    String
+
+  /// First day (UTC) of the calendar month the money was collected in.
+  /// Mirrors how the Reports page buckets Payment.paidOn.
+  collectedMonth DateTime
+
+  /// Sum of that month's deleted payments.
+  amount         Decimal  @db.Decimal(10, 2)
+
+  /// How many Payment rows this row replaces.
+  paymentCount   Int
+
+  archivedAt     DateTime @default(now())
+
+  @@index([collectedMonth])
+}

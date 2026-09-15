@@ -25,7 +25,7 @@ export default async function ReportsPage() {
   }
   const earliestMonthStart = monthStarts[0];
 
-  const [studentsWithPayments, paymentsInRange] = await Promise.all([
+  const [studentsWithPayments, paymentsInRange, archivedInRange] = await Promise.all([
     prisma.student.findMany({
       where: { status: "ACTIVE" },
       include: { seat: true, payments: true },
@@ -34,16 +34,34 @@ export default async function ReportsPage() {
       where: { paidOn: { gte: earliestMonthStart } },
       select: { amount: true, paidOn: true },
     }),
+    // Revenue from students who have since been permanently deleted. Their
+    // Payment rows are gone, but the money was really collected in those
+    // months, so it still counts towards those months' totals. See
+    // deleteStudent() in lib/actions/students.ts.
+    prisma.archivedRevenue.findMany({
+      where: { collectedMonth: { gte: earliestMonthStart } },
+      select: {
+        studentName: true,
+        collectedMonth: true,
+        amount: true,
+        paymentCount: true,
+      },
+    }),
   ]);
 
   const monthlyTotals = monthStarts.map((monthStart) => {
     const monthEnd = new Date(
       Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 1)
     );
-    const total = paymentsInRange
+    const livePayments = paymentsInRange
       .filter((p) => p.paidOn >= monthStart && p.paidOn < monthEnd)
       .reduce((sum, p) => sum + Number(p.amount), 0);
-    return { monthStart, total };
+    // collectedMonth is always the 1st of its month, so this bucket test
+    // matches the live-payment one above exactly.
+    const archived = archivedInRange
+      .filter((a) => a.collectedMonth >= monthStart && a.collectedMonth < monthEnd)
+      .reduce((sum, a) => sum + Number(a.amount), 0);
+    return { monthStart, total: livePayments + archived };
   });
 
   const thisMonthTotal = monthlyTotals[monthlyTotals.length - 1]?.total ?? 0;
@@ -76,16 +94,35 @@ export default async function ReportsPage() {
     orderBy: { paidOn: "desc" },
   });
 
-  const paymentExportRows: PaymentExportRow[] = thisMonthPayments.map((p) => ({
-    receiptNo: p.receiptNo,
-    studentName: p.student.name,
-    seatNumber: p.student.seat?.seatNumber ?? null,
-    periodMonth: p.periodMonth.toISOString(),
-    paidOn: p.paidOn.toISOString(),
-    amount: Number(p.amount),
-    mode: p.mode,
-    status: p.status,
-  }));
+  const paymentExportRows: PaymentExportRow[] = [
+    ...thisMonthPayments.map((p) => ({
+      receiptNo: p.receiptNo,
+      studentName: p.student.name,
+      seatNumber: p.student.seat?.seatNumber ?? null,
+      periodMonth: p.periodMonth.toISOString(),
+      paidOn: p.paidOn.toISOString(),
+      amount: Number(p.amount),
+      mode: p.mode,
+      status: p.status,
+    })),
+    // One summary line per deleted student whose money landed this month.
+    // Their individual receipts no longer exist, so without these the CSV
+    // would add up to less than the "This month's collection" figure above.
+    ...archivedInRange
+      .filter((a) => a.collectedMonth >= thisMonthStart)
+      .map((a) => ({
+        receiptNo: "ARCHIVED",
+        studentName: `${a.studentName} (deleted, ${a.paymentCount} receipt${
+          a.paymentCount === 1 ? "" : "s"
+        })`,
+        seatNumber: null,
+        periodMonth: a.collectedMonth.toISOString(),
+        paidOn: a.collectedMonth.toISOString(),
+        amount: Number(a.amount),
+        mode: "ARCHIVED",
+        status: "ARCHIVED",
+      })),
+  ];
 
   const overdueExportRows: OverdueExportRow[] = dues.map(({ student, due }) => ({
     studentName: student.name,

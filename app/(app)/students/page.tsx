@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { formatCurrency } from "@/lib/format";
 import { computeDueStatus, type DueStatus } from "@/lib/fees";
+import { DeleteStudentDialog } from "@/components/students/delete-student-dialog";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,7 @@ export default async function StudentsPage({
               <th className="px-4 py-3">Fee</th>
               <th className="px-4 py-3">Status</th>
               <th className="px-4 py-3">This month</th>
+              <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -114,11 +116,23 @@ export default async function StudentsPage({
                     "—"
                   )}
                 </td>
+                <td className="px-4 py-3 text-right">
+                  <DeleteStudentDialog
+                    studentId={student.id}
+                    studentName={student.name}
+                    seatNumber={student.seat?.seatNumber ?? null}
+                    paymentCount={student.payments.length}
+                    paymentTotal={student.payments.reduce(
+                      (sum, p) => sum + Number(p.amount),
+                      0
+                    )}
+                  />
+                </td>
               </tr>
             ))}
             {students.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                <td colSpan={6} className="px-4 py-8 text-center text-muted-foreground">
                   No students found.
                 </td>
               </tr>
